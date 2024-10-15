@@ -48,16 +48,6 @@ By progressively adding encoding and decoding layers, MIDI VAE aims to identify 
 /project
 ├── /data
 │   ├── /raw
-│   │   ├── /Bach
-│   │   ├── /Beethoven
-│   │   ├── /Brahms
-│   │   ├── /Cambini
-│   │   ├── /Dvorak
-│   │   ├── /Faure
-│   │   ├── /Haydn
-│   │   ├── /Mozart
-│   │   ├── /Ravel
-│   │   └── /Schubert
 │   ├── /processed
 │   ├── /train
 │   └── /test
@@ -114,17 +104,6 @@ By progressively adding encoding and decoding layers, MIDI VAE aims to identify 
 
    ```bash
    pip install -r requirements.txt
-   ```
-
-   *`requirements.txt`* should include:
-
-   ```
-   torch
-   numpy
-   pretty_midi
-   tqdm
-   matplotlib
-   scikit-learn
    ```
 
 4. **Verify Installation**
