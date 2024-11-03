@@ -5,7 +5,7 @@ import argparse
 import torch
 from torch.utils.data import DataLoader
 from code.data_loader import MidiDataset
-from code.model import VAE
+from code.model import VAE_Multistream
 from code.train import train_epoch, test_epoch, save_checkpoint, load_checkpoint
 from code.utils import plot_losses, create_dir
 from code.generate import reconstruct_and_save_midi, sample_latent_space
@@ -17,17 +17,18 @@ def parse_arguments():
     Returns:
     - args: Parsed arguments.
     """
-    parser = argparse.ArgumentParser(description="VAE for MIDI Encoding and Decoding")
+    parser = argparse.ArgumentParser(description="VAE for MIDI Encoding and Decoding with Style Embedding")
     parser.add_argument('--data_dir', type=str, default='data/raw', help='Directory containing raw MIDI files')
     parser.add_argument('--processed_dir', type=str, default='data/processed', help='Directory to store processed data')
     parser.add_argument('--output_dir', type=str, default='outputs', help='Directory to save output MIDI files')
     parser.add_argument('--models_dir', type=str, default='models', help='Directory to save model checkpoints')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size for training')
-    parser.add_argument('--sequence_length', type=int, default=500, help='Number of time steps per sequence')
+    parser.add_argument('--sequence_length', type=int, default=12, help='Number of crotchet notes per sequence')
     parser.add_argument('--fs', type=int, default=100, help='Sampling frequency for piano rolls')
     parser.add_argument('--latent_dim', type=int, default=20, help='Dimension of the latent space')
-    parser.add_argument('--layer_dims', nargs='+', type=int, default=[512], help='List of encoder layer dimensions')
+    parser.add_argument('--hidden_dims', nargs='+', type=int, default=[256, 128], help='List of hidden layer dimensions for GRUs')
+    parser.add_argument('--style_embed_dim', type=int, default=16, help='Dimension of the style (composer) embedding')
     parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate for the optimizer')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to a checkpoint to resume training')
     parser.add_argument('--generate', action='store_true', help='Flag to generate MIDI files from the model')
@@ -76,8 +77,20 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=True)
 
     # Model Initialization
-    input_dim = 128 * args.sequence_length  # 128 MIDI pitches
-    model = VAE(input_dim=input_dim, layer_dims=args.layer_dims, latent_dim=args.latent_dim).to(device)
+    input_dims = {
+        'pitch': 128,         # Number of MIDI pitches
+        'instrument': 16,     # Number of instruments (adjust as needed)
+        'velocity': 128       # Number of MIDI pitches for velocity
+    }
+    num_composers = dataset.composer_map.__len__()
+
+    model = VAE_Multistream(
+        input_dims=input_dims,
+        hidden_dims={'pitch': args.hidden_dims[0], 'instrument': args.hidden_dims[1], 'velocity': args.hidden_dims[1], 'combined': 128},
+        latent_dim=args.latent_dim,
+        num_composers=num_composers,
+        style_embed_dim=args.style_embed_dim
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     start_epoch = 1
@@ -104,11 +117,12 @@ def main():
         test_losses.append(test_loss)
         print(f"Test Loss: {test_loss:.4f}")
 
-        # Save checkpoint
-        checkpoint_path = os.path.join(args.models_dir, f'vae_epoch_{epoch}.pth')
-        save_checkpoint(model, optimizer, epoch, test_loss, checkpoint_path)
+        # Save checkpoint every 10 epochs or at the last epoch
+        if epoch % 10 == 0 or epoch == args.epochs:
+            checkpoint_path = os.path.join(args.models_dir, f'vae_epoch_{epoch}.pth')
+            save_checkpoint(model, optimizer, epoch, test_loss, checkpoint_path)
 
-        # Plot losses every 10 epochs
+        # Plot losses every 10 epochs or at the last epoch
         if epoch % 10 == 0 or epoch == args.epochs:
             plot_path = os.path.join(args.output_dir, f'loss_epoch_{epoch}.png')
             plot_losses(train_losses, test_losses, save_path=plot_path)
@@ -116,7 +130,7 @@ def main():
     # Generation or Reconstruction
     if args.generate or args.reconstruct:
         print("\nLoading the latest model for generation/reconstruction...")
-        latest_checkpoint = os.path.join(args.models_dir, f'vae_epoch_{args.epochs}.pth')
+        latest_checkpoint = os.path.join(args.models_dir, f'vae_epoch_{epoch}.pth')
         load_checkpoint(model, optimizer, latest_checkpoint, device)
 
         if args.reconstruct:
@@ -126,20 +140,22 @@ def main():
                 dataloader=test_loader,
                 device=device,
                 output_dir=args.output_dir,
-                num_samples=args.num_samples,
-                latent_dim=args.latent_dim,
-                layer_dims=args.layer_dims
+                num_samples=args.num_samples
             )
 
         if args.generate:
             print("Generating new MIDI files by sampling the latent space...")
-            sample_latent_space(
-                model=model,
-                device=device,
-                output_dir=args.output_dir,
-                num_samples=args.num_samples,
-                latent_dim=args.latent_dim
-            )
+            # Example: Assigning a random composer for generation
+            for _ in range(args.num_samples):
+                composer_id = torch.randint(0, num_composers, (1,)).item()
+                sample_latent_space(
+                    model=model,
+                    device=device,
+                    output_dir=args.output_dir,
+                    num_samples=1,
+                    latent_dim=args.latent_dim,
+                    composer_id=composer_id
+                )
 
 if __name__ == "__main__":
     main()

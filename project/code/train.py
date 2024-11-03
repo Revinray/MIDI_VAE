@@ -5,24 +5,34 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
-def loss_function(recon_x, x, mu, log_sigma):
+def loss_function(pitch_recon, instr_recon, vel_recon, pitch, instrument, velocity, mu, logvar):
     """
     Computes the VAE loss function as the sum of reconstruction loss and KL divergence.
 
     Parameters:
-    - recon_x (Tensor): Reconstructed output from the decoder.
-    - x (Tensor): Original input data.
+    - pitch_recon (Tensor): Reconstructed pitch roll.
+    - instr_recon (Tensor): Reconstructed instrument roll.
+    - vel_recon (Tensor): Reconstructed velocity roll.
+    - pitch (Tensor): Original pitch roll.
+    - instrument (Tensor): Original instrument roll.
+    - velocity (Tensor): Original velocity roll.
     - mu (Tensor): Mean from the encoder's latent space.
-    - log_sigma (Tensor): Log variance from the encoder's latent space.
+    - logvar (Tensor): Log variance from the encoder's latent space.
 
     Returns:
     - total_loss (Tensor): The combined loss.
     """
-    # Binary Cross-Entropy for reconstruction loss
-    BCE = nn.functional.binary_cross_entropy(recon_x, x, reduction='sum')
-    # Kullback-Leibler Divergence for regularization
-    KLD = -0.5 * torch.sum(1 + log_sigma - mu.pow(2) - log_sigma.exp())
-    return BCE + KLD
+    # Reconstruction loss
+    pitch_loss = nn.functional.binary_cross_entropy(pitch_recon, pitch, reduction='sum')
+    instr_loss = nn.functional.binary_cross_entropy(instr_recon, instrument, reduction='sum')
+    vel_loss = nn.functional.mse_loss(vel_recon, velocity, reduction='sum')  # Using MSE for velocity
+
+    recon_loss = pitch_loss + instr_loss + vel_loss
+
+    # KL divergence
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+    return recon_loss + KLD
 
 def train_epoch(model, dataloader, optimizer, device):
     """
@@ -39,11 +49,15 @@ def train_epoch(model, dataloader, optimizer, device):
     """
     model.train()
     train_loss = 0
-    for batch_idx, data in enumerate(tqdm(dataloader, desc="Training", leave=False)):
-        data = data.to(device)
+    for batch in tqdm(dataloader, desc="Training", leave=False):
+        pitch = batch['pitch'].to(device)
+        instrument = batch['instrument'].to(device)
+        velocity = batch['velocity'].to(device)
+        composer = batch['composer'].to(device)
+
         optimizer.zero_grad()
-        recon_batch, mu, log_sigma = model(data)
-        loss = loss_function(recon_batch, data, mu, log_sigma)
+        pitch_recon, instr_recon, vel_recon, mu, logvar = model(pitch, instrument, velocity, composer)
+        loss = loss_function(pitch_recon, instr_recon, vel_recon, pitch, instrument, velocity, mu, logvar)
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
@@ -65,10 +79,14 @@ def test_epoch(model, dataloader, device):
     model.eval()
     test_loss = 0
     with torch.no_grad():
-        for data in tqdm(dataloader, desc="Testing", leave=False):
-            data = data.to(device)
-            recon_batch, mu, log_sigma = model(data)
-            loss = loss_function(recon_batch, data, mu, log_sigma)
+        for batch in tqdm(dataloader, desc="Testing", leave=False):
+            pitch = batch['pitch'].to(device)
+            instrument = batch['instrument'].to(device)
+            velocity = batch['velocity'].to(device)
+            composer = batch['composer'].to(device)
+
+            pitch_recon, instr_recon, vel_recon, mu, logvar = model(pitch, instrument, velocity, composer)
+            loss = loss_function(pitch_recon, instr_recon, vel_recon, pitch, instrument, velocity, mu, logvar)
             test_loss += loss.item()
     average_loss = test_loss / len(dataloader.dataset)
     return average_loss

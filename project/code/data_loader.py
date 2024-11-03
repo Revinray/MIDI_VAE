@@ -3,65 +3,141 @@
 import pretty_midi
 import numpy as np
 import os
-from glob import glob
+from torch.utils.data import Dataset
 import torch
-from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 
 class MidiDataset(Dataset):
     """
-    Custom Dataset for loading MIDI files and converting them into piano roll sequences.
+    Custom Dataset for loading MIDI files and converting them into pitch, instrument, and velocity roll sequences.
     """
 
-    def __init__(self, midi_files, sequence_length=500, fs=100):
+    def __init__(self, midi_files, sequence_length=12, fs=100):
         """
         Initializes the dataset by loading and processing MIDI files.
 
         Args:
             midi_files (list): List of paths to MIDI files.
-            sequence_length (int): Number of time steps per sequence.
+            sequence_length (int): Number of crotchet notes per sequence.
             fs (int): Sampling frequency (frames per second) for piano roll.
         """
         self.midi_files = midi_files
         self.sequence_length = sequence_length
         self.fs = fs
         self.data = []
+        self.composer_map = self.create_composer_map()
+        self.instrument_map = self.create_instrument_map()
         self.load_data()
+
+    def create_composer_map(self):
+        """
+        Creates a mapping from composer names to unique IDs.
+
+        Returns:
+            dict: Composer name to ID mapping.
+        """
+        composers = set()
+        for midi_file in self.midi_files:
+            composer = self.get_composer_from_path(midi_file)
+            composers.add(composer)
+        return {composer: idx for idx, composer in enumerate(sorted(composers))}
+
+    def create_instrument_map(self):
+        """
+        Creates a mapping from instrument programs to unique IDs.
+
+        Returns:
+            dict: Instrument program number to ID mapping.
+        """
+        instruments = set()
+        for midi_file in self.midi_files:
+            try:
+                pm = pretty_midi.PrettyMIDI(midi_file)
+                for instrument in pm.instruments:
+                    instruments.add(instrument.program)
+            except:
+                continue
+        return {instr: idx for idx, instr in enumerate(sorted(instruments))}
 
     def load_data(self):
         """
-        Loads MIDI files, converts them to piano rolls, splits into sequences, and stores them.
+        Loads MIDI files, extracts rolls, splits into sequences, and stores them.
         """
         for midi_file in self.midi_files:
             try:
-                piano_roll = self.midi_to_pianoroll(midi_file, fs=self.fs)
-                piano_roll = (piano_roll > 0).astype(np.float32)  # Binarize to 0 or 1
-                num_timesteps = piano_roll.shape[1]
-                num_sequences = num_timesteps // self.sequence_length
+                composer = self.get_composer_from_path(midi_file)
+                composer_id = self.composer_map[composer]
+
+                pm = pretty_midi.PrettyMIDI(midi_file)
+
+                pitch_roll, instrument_roll, velocity_roll = self.extract_rolls(pm, fs=self.fs)
+
+                # Calculate number of sequences
+                sequence_length_seconds = self.sequence_length * 0.5  # Assuming crotchet = 0.5s
+                num_timesteps = int(sequence_length_seconds * self.fs)
+                num_sequences = pitch_roll.shape[1] // num_timesteps
 
                 for i in range(num_sequences):
-                    start = i * self.sequence_length
-                    end = start + self.sequence_length
-                    seq = piano_roll[:, start:end]
-                    if seq.shape[1] == self.sequence_length:
-                        self.data.append(seq.flatten())  # Flatten to 1D vector
+                    start = i * num_timesteps
+                    end = start + num_timesteps
+
+                    pitch_seq = pitch_roll[:, start:end]
+                    instr_seq = instrument_roll[:, start:end]
+                    vel_seq = velocity_roll[:, start:end]
+
+                    if pitch_seq.shape[1] == num_timesteps:
+                        self.data.append({
+                            'pitch': pitch_seq,
+                            'instrument': instr_seq,
+                            'velocity': vel_seq,
+                            'composer': composer_id
+                        })
             except Exception as e:
                 print(f"Error processing {midi_file}: {e}")
 
-    def midi_to_pianoroll(self, midi_file, fs=100):
+    def extract_rolls(self, pm, fs):
         """
-        Converts a MIDI file to a piano roll.
+        Extracts pitch, instrument, and velocity rolls from a PrettyMIDI object.
+
+        Args:
+            pm (pretty_midi.PrettyMIDI): Parsed MIDI object.
+            fs (int): Sampling frequency.
+
+        Returns:
+            tuple: (pitch_roll, instrument_roll, velocity_roll)
+        """
+        num_pitches = 128
+        num_instruments = len(self.instrument_map)
+
+        pitch_roll = np.zeros((num_pitches, pm.get_end_time() * fs))
+        instrument_roll = np.zeros((num_instruments, pm.get_end_time() * fs))
+        velocity_roll = np.zeros((num_pitches, pm.get_end_time() * fs))
+
+        for instrument in pm.instruments:
+            instr_id = self.instrument_map.get(instrument.program, 0)
+            for note in instrument.notes:
+                start_idx = int(note.start * fs)
+                end_idx = int(note.end * fs)
+                pitch = note.pitch
+                velocity = note.velocity / 127.0  # Normalize
+
+                pitch_roll[pitch, start_idx:end_idx] = 1
+                instrument_roll[instr_id, start_idx:end_idx] = 1
+                velocity_roll[pitch, start_idx:end_idx] = velocity
+
+        return pitch_roll, instrument_roll, velocity_roll
+
+    def get_composer_from_path(self, midi_file):
+        """
+        Extracts composer name from the MIDI file path.
 
         Args:
             midi_file (str): Path to the MIDI file.
-            fs (int): Sampling frequency (frames per second).
 
         Returns:
-            np.ndarray: Piano roll matrix (128 pitches x time steps).
+            str: Composer name.
         """
-        pm = pretty_midi.PrettyMIDI(midi_file)
-        piano_roll = pm.get_piano_roll(fs=fs)
-        return piano_roll
+        return os.path.basename(os.path.dirname(midi_file))
 
     def __len__(self):
         """
@@ -80,49 +156,12 @@ class MidiDataset(Dataset):
             index (int): Index of the data sample.
 
         Returns:
-            torch.Tensor: 1D tensor representing a flattened piano roll sequence.
+            dict: Dictionary containing pitch, instrument, velocity tensors and composer ID.
         """
-        return torch.tensor(self.data[index])
-
-def prepare_dataloaders(raw_data_dir, sequence_length=500, fs=100, batch_size=64, test_size=0.2, random_state=42):
-    """
-    Prepares training and testing dataloaders from raw MIDI files.
-
-    Args:
-        raw_data_dir (str): Path to the directory containing raw MIDI files.
-        sequence_length (int): Number of time steps per sequence.
-        fs (int): Sampling frequency (frames per second).
-        batch_size (int): Batch size for DataLoader.
-        test_size (float): Proportion of data to include in the test split.
-        random_state (int): Random seed for reproducibility.
-
-    Returns:
-        tuple: (train_loader, test_loader)
-    """
-    # Collect all MIDI file paths
-    midi_files = []
-    for root, _, files in os.walk(raw_data_dir):
-        for file in files:
-            if file.lower().endswith('.mid') or file.lower().endswith('.midi'):
-                midi_files.append(os.path.join(root, file))
-
-    print(f"Found {len(midi_files)} MIDI files.")
-
-    # Initialize the dataset
-    full_dataset = MidiDataset(midi_files, sequence_length=sequence_length, fs=fs)
-
-    # Split into training and testing sets
-    train_data, test_data = train_test_split(full_dataset.data, test_size=test_size, random_state=random_state)
-
-    # Create Dataset objects
-    train_dataset = torch.utils.data.TensorDataset(torch.tensor(train_data))
-    test_dataset = torch.utils.data.TensorDataset(torch.tensor(test_data))
-
-    # Create DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
-
-    print(f"Training samples: {len(train_dataset)}")
-    print(f"Testing samples: {len(test_dataset)}")
-
-    return train_loader, test_loader
+        sample = self.data[index]
+        return {
+            'pitch': torch.tensor(sample['pitch'], dtype=torch.float32),
+            'instrument': torch.tensor(sample['instrument'], dtype=torch.float32),
+            'velocity': torch.tensor(sample['velocity'], dtype=torch.float32),
+            'composer': torch.tensor(sample['composer'], dtype=torch.long)
+        }

@@ -25,22 +25,14 @@
 
 ## Project Overview
 
-**MIDI VAE** is a Variational Autoencoder (VAE) designed to encode and decode MIDI music files. The primary goal is to compress MIDI data into a lower-dimensional latent space (`z`) and accurately reconstruct the original music, enabling tasks such as music generation, style transfer, and analysis.
-
-By progressively adding encoding and decoding layers, MIDI VAE aims to identify the minimal latent dimensionality that maintains high-quality reconstruction while minimizing computational complexity.
-
----
+MIDI VAE is a Variational Autoencoder designed to encode and decode MIDI files by capturing intricate musical features such as pitch, instrument, and velocity. It also incorporates composer styles, allowing for style-conditioned music generation.
 
 ## Features
 
-- **Modular VAE Architecture:** Easily add or remove encoding and decoding layers.
-- **Dimensionality Reduction:** Explore the optimal size of the latent space for music encoding.
-- **MIDI Generation:** Generate new MIDI files by sampling from the latent space.
-- **MIDI Reconstruction:** Reconstruct existing MIDI files to assess encoding quality.
-- **Checkpointing:** Save and resume training from specific epochs.
-- **Visualization:** Plot training and test loss curves for performance monitoring.
-
----
+- **Multi-Stream Processing**: Handles pitch, instrument, and velocity rolls separately using GRUs.
+- **Style Embedding**: Incorporates composer information to influence the latent space.
+- **Customizable Architecture**: Adjustable GRU layers and dense layers for flexibility.
+- **Data Splitting**: Splits MIDI data into sequences of 12 crotchet notes to maintain musical structure.
 
 ## Directory Structure
 
