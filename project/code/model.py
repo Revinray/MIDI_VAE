@@ -110,7 +110,7 @@ class VAE_Multistream(nn.Module):
         h_dec = F.relu(self.decoder_fc(z))              # Shape: (batch, combined_hidden)
 
         # Repeat for sequence length
-        seq_length = 12  # As per sequence_length in data_loader
+        seq_length = self.sequence_length  # Ensure this is accessible or passed appropriately
         h_dec = h_dec.unsqueeze(1).repeat(1, seq_length, 1)  # Shape: (batch, seq_length, combined_hidden)
 
         # Decode pitch

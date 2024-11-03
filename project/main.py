@@ -66,6 +66,10 @@ def main():
         fs=args.fs
     )
 
+    if len(dataset) == 0:
+        print("No valid data found. Exiting.")
+        return
+
     # Split into training and testing sets (80-20 split)
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
@@ -79,10 +83,10 @@ def main():
     # Model Initialization
     input_dims = {
         'pitch': 128,         # Number of MIDI pitches
-        'instrument': 16,     # Number of instruments (adjust as needed)
+        'instrument': len(dataset.instrument_map),     # Number of instruments dynamically determined
         'velocity': 128       # Number of MIDI pitches for velocity
     }
-    num_composers = dataset.composer_map.__len__()
+    num_composers = len(dataset.composer_map)
 
     model = VAE_Multistream(
         input_dims=input_dims,

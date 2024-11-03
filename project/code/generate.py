@@ -23,7 +23,10 @@ def piano_roll_to_midi(pitch_roll, instrument_roll, velocity_roll, fs=100, filen
     for instr_id in range(num_instruments):
         if np.sum(instrument_roll[instr_id]) == 0:
             continue
-        instrument = pretty_midi.Instrument(program=instr_id)  # Adjust mapping as needed
+        # Here, instr_id should map back to the actual MIDI program number.
+        # Assuming a direct mapping for simplicity; adjust as needed.
+        program_number = instr_id  # Modify if you have a separate mapping
+        instrument = pretty_midi.Instrument(program=program_number)
 
         active_pitches = np.where(pitch_roll[:, :] > 0)
         for pitch, time_step in zip(*active_pitches):

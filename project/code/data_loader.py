@@ -5,7 +5,6 @@ import numpy as np
 import os
 from torch.utils.data import Dataset
 import torch
-from sklearn.model_selection import train_test_split
 
 class MidiDataset(Dataset):
     """
@@ -38,8 +37,7 @@ class MidiDataset(Dataset):
         """
         composers = set()
         for midi_file in self.midi_files:
-            composer = self.get_composer_from_path(midi_file)
-            composers.add(composer)
+            composers.add(self.get_composer_from_path(midi_file))
         return {composer: idx for idx, composer in enumerate(sorted(composers))}
 
     def create_instrument_map(self):
@@ -73,8 +71,12 @@ class MidiDataset(Dataset):
                 pitch_roll, instrument_roll, velocity_roll = self.extract_rolls(pm, fs=self.fs)
 
                 # Calculate number of sequences
-                sequence_length_seconds = self.sequence_length * 0.5  # Assuming crotchet = 0.5s
+                # Assuming crotchet = 0.5s, adjust if necessary
+                sequence_length_seconds = self.sequence_length * 0.5
                 num_timesteps = int(sequence_length_seconds * self.fs)
+                if num_timesteps == 0:
+                    print(f"Sequence length too short for {midi_file}. Skipping.")
+                    continue
                 num_sequences = pitch_roll.shape[1] // num_timesteps
 
                 for i in range(num_sequences):
@@ -109,17 +111,23 @@ class MidiDataset(Dataset):
         num_pitches = 128
         num_instruments = len(self.instrument_map)
 
-        pitch_roll = np.zeros((num_pitches, pm.get_end_time() * fs))
-        instrument_roll = np.zeros((num_instruments, pm.get_end_time() * fs))
-        velocity_roll = np.zeros((num_pitches, pm.get_end_time() * fs))
+        end_time = pm.get_end_time()
+        num_timesteps = int(np.ceil(end_time * fs))
+
+        pitch_roll = np.zeros((num_pitches, num_timesteps), dtype=np.float32)
+        instrument_roll = np.zeros((num_instruments, num_timesteps), dtype=np.float32)
+        velocity_roll = np.zeros((num_pitches, num_timesteps), dtype=np.float32)
 
         for instrument in pm.instruments:
             instr_id = self.instrument_map.get(instrument.program, 0)
             for note in instrument.notes:
-                start_idx = int(note.start * fs)
-                end_idx = int(note.end * fs)
+                start_idx = int(np.floor(note.start * fs))
+                end_idx = int(np.ceil(note.end * fs))
                 pitch = note.pitch
                 velocity = note.velocity / 127.0  # Normalize
+
+                if pitch < 0 or pitch >= num_pitches:
+                    continue  # Skip invalid pitches
 
                 pitch_roll[pitch, start_idx:end_idx] = 1
                 instrument_roll[instr_id, start_idx:end_idx] = 1
